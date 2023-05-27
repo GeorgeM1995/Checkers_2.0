@@ -4,7 +4,79 @@ import enum
 import abc
 
 
+class PlayerType(abc.ABC):
+    @abc.abstractmethod
+    def get_move(self):
+        pass
 
+
+class HumanPlayer(PlayerType):
+    def __init__(self):
+        self._move = []
+        self.state = self.state_1
+        self.start_pos = None
+        self.end_pos = None
+
+    def reset_data(self):
+        self._move = []
+        self.state = self.state_1
+        self.start_pos = None
+        self.end_pos = None
+
+    def get_move(self):
+        if len(self._move) < 2:
+            return None
+        else:
+            return self._move
+
+    def on_event(self, event, logic, graphics, screen, player):
+        self.state(event, logic, graphics, screen, player)
+
+    def state_1(self, event, logic, graphics, screen, player):
+        if event.type == pygame.MOUSEBUTTONUP:
+            mouse_click = pygame.mouse.get_pos()
+            if graphics.rect_at(mouse_click):
+                self.start_pos = graphics.rect_at(mouse_click)
+                if logic.player_owns_square(player, self.start_pos):
+                    self.state = self.state_2
+        
+    def state_2(self, event, logic, graphics, screen, player):
+        graphics.highlight_piece(screen, self.start_pos, logic.is_king(self.start_pos, player), player)
+        if event.type == pygame.MOUSEBUTTONUP:
+            mouse_click = pygame.mouse.get_pos()
+            if graphics.rect_at(mouse_click) is not None:
+                board_pos = graphics.rect_at(mouse_click)
+                if self.start_pos == board_pos:
+                    self.state = self.state_1
+                if logic.is_legal(self.start_pos, board_pos):
+                    self.end_pos = board_pos
+                    self._move = [self.start_pos, self.end_pos]
+
+    def toggle_jump_state(self):
+        self._move = []
+        self.start_pos = self.end_pos
+        self.state = self.jump_state
+
+    def jump_state(self, event, logic, graphics, screen, player):
+        graphics.highlight_piece(screen, self.start_pos, logic.is_king(self.start_pos, player), player)
+        if event.type == pygame.MOUSEBUTTONUP:
+            mouse_click = pygame.mouse.get_pos()
+            board_pos = graphics.rect_at(mouse_click)
+            if graphics.rect_at(mouse_click) is not None:
+                board_pos = graphics.rect_at(mouse_click)
+            if logic.is_legal(self.start_pos, board_pos):
+                self.end_pos = board_pos
+                self._move = [self.start_pos, self.end_pos]
+
+
+class RandomPlayer(PlayerType):
+    def get_move(self):
+        pass
+
+
+class MiniMaxPlayer(PlayerType):
+    def get_move(self):
+        pass
 
 
 class CellValue(enum.Enum):
@@ -163,6 +235,9 @@ class GameLogic:
         else:
             return Player.BLACK
 
+    def change_player(self, player):
+        self.player_turn = player
+
     # Return the direction that each player is moving in the y-axis
     def player_direction(self, player):
         if player == Player.BLACK:
@@ -233,7 +308,7 @@ class GameLogic:
 
         if self.take_at is not None:
             self.set_value_at(self.take_at, CellValue.EMPTY)
-            self.take_made = True
+            self.set_take_made(True)
             self.take_position = end_pos
 
     # Check if a jump can be made after a take
@@ -258,8 +333,52 @@ class GameLogic:
                 return True
         return False
 
-    def set_take_made(self):
-        self.take_made = False
+    def set_take_made(self, is_take_made):
+        self.take_made = is_take_made
+
+    def get_moves(self):
+        legal_moves = []
+        y_index = 0
+        x_index = 0
+        for row in self.board:
+            for space in row:
+
+                front_right = (x_index + 1, y_index + 1)
+                front_left = (x_index - 1, y_index + 1)
+                back_right = (x_index + 1, y_index - 1)
+                back_left = (x_index - 1, y_index - 1)
+
+                take_front_right = (x_index + 2, y_index + 2)
+                take_front_left = (x_index - 2, y_index + 2)
+                take_back_right = (x_index + 2, y_index - 2)
+                take_back_left = (x_index - 2, y_index - 2)
+
+                if space == CellValue.RED or space == CellValue.RED_KING:
+                    start_pos = (x_index, y_index)
+                    if self.is_legal(start_pos, front_right):
+                        legal_moves.append((start_pos, front_right))
+                    if self.is_legal(start_pos, front_left):
+                        legal_moves.append((start_pos, front_left))
+                    if self.is_legal(start_pos, back_right):
+                        legal_moves.append((start_pos, back_right))
+                    if self.is_legal(start_pos, back_left):
+                        legal_moves.append((start_pos, back_left))
+
+                    if self.is_legal(start_pos, take_front_right):
+                        legal_moves.append((start_pos, take_front_right))
+                    if self.is_legal(start_pos, take_front_left):
+                        legal_moves.append((start_pos, take_front_left))
+                    if self.is_legal(start_pos, take_back_right):
+                        legal_moves.append((start_pos, take_back_right))
+                    if self.is_legal(start_pos, take_back_left):
+                        legal_moves.append((start_pos, take_back_left))
+
+                x_index += 1
+            y_index += 1
+            x_index = 0
+        return legal_moves
+
+
 
     def game_over(self):
         black_pieces = 0
@@ -279,123 +398,51 @@ class GameLogic:
 class GameState:
     def __init__(self):
         self.human_player = HumanPlayer()
-        self.start_pos = None
-        self.end_pos = None
+        self.human_player_2 = HumanPlayer()
         self.resolution = 900
         self.cell_size = 111
         self.screen = pygame.display.set_mode((self.resolution, self.resolution))
         self.logic = GameLogic()
         self.graphics = GraphicalBoard()
-        self.state = self.player_turn_1
+        self.state = self.player_1_turn
 
     # State 1 for the player turn (Player has to select a piece)
-    def player_turn_1(self, event):
-        if event.type == pygame.MOUSEBUTTONUP:
-            mouse_click = pygame.mouse.get_pos()
-            if self.graphics.rect_at(mouse_click):
-                self.start_pos = self.graphics.rect_at(mouse_click)
-                if self.logic.player_owns_square(Player.BLACK, self.start_pos):
-                    self.state = self.player_turn_2
-                    # if piece can make a legal move change state to selection
+    def player_1_turn(self, event):
+        self.human_player.on_event(event, self.logic, self.graphics, self.screen, self.logic.player_turn)
+        move = self.human_player.get_move()
+        if move is not None:
+            self.logic.perform_move(move[0], move[1])
+            if self.logic.check_for_jump(move[1]) and self.logic.take_made:
+                self.human_player.toggle_jump_state()
+                self.human_player.on_event(event, self.logic, self.graphics, self.screen, self.logic.player_turn)
+                move = self.human_player.get_move()
+                if move is not None:
+                    self.logic.perform_move(move[0], move[1])
+            else:
+                self.human_player.reset_data()
+                self.logic.set_take_made(False)
+                self.logic.change_player(self.logic.next_player())
+                self.state = self.player_2_turn
 
-    # if a player piece has been clicked on and the piece can make a legal move
-    # change to the make move state
-    # Player can move their piece if the move is legal or click on the same piece to return to previous state
-    def player_turn_2(self, event):
-        self.graphics.highlight_piece(self.screen, self.start_pos,
-                                      self.logic.is_king(self.start_pos, Player.BLACK), Player.BLACK)
-        if event.type == pygame.MOUSEBUTTONUP:
-            mouse_click = pygame.mouse.get_pos()
-            if self.graphics.rect_at(mouse_click) is not None:
-                board_pos = self.graphics.rect_at(mouse_click)
-                if self.start_pos == board_pos:
-                    self.state = self.player_turn_1
-                if self.logic.is_legal(self.start_pos, board_pos):
-                    self.end_pos = board_pos
-                    self.logic.perform_move(self.start_pos, self.end_pos)
+    def player_2_turn(self, event):
+        self.human_player_2.on_event(event, self.logic, self.graphics, self.screen, self.logic.player_turn)
+        move = self.human_player_2.get_move()
+        if move is not None:
+            self.logic.perform_move(move[0], move[1])
 
-                    if not self.logic.check_for_jump(self.end_pos) or not self.logic.take_made:
-                        self.logic.player_turn = self.logic.next_player()
-                        self.state = self.opponent_turn_1
-                    else:
-                        self.start_pos = self.end_pos
-                        self.end_pos = None
-                        self.state = self.player_turn_3
-                    self.logic.set_take_made()
-                   # self.human_player.get_move(self.logic)
-
-    # Player State for jumping
-    # If the player can jump, they must jump until no more jumps are available
-    # Once no jumps are available, state is passed to opponents turn.
-    def player_turn_3(self, event):
-        self.graphics.highlight_piece(self.screen, self.start_pos,
-                                      self.logic.is_king(self.start_pos, Player.BLACK), Player.BLACK)
-        if event.type == pygame.MOUSEBUTTONUP:
-            mouse_click = pygame.mouse.get_pos()
-            board_pos = self.graphics.rect_at(mouse_click)
-            if self.graphics.rect_at(mouse_click) is not None:
-                board_pos = self.graphics.rect_at(mouse_click)
-            if self.logic.is_legal(self.start_pos, board_pos):
-                self.end_pos = board_pos
-                self.logic.perform_move(self.start_pos, self.end_pos)
-                if not self.logic.check_for_jump(self.end_pos):
-                    self.logic.player_turn = self.logic.next_player()
-                    self.state = self.opponent_turn_1
-                else:
-                    self.start_pos = self.end_pos
-                    self.end_pos = None
-                    self.state = self.player_turn_3
-                self.logic.set_take_made()
-
-    # Opponent states mirror player states
-    def opponent_turn_1(self, event):
-        if event.type == pygame.MOUSEBUTTONUP:
-            mouse_click = pygame.mouse.get_pos()
-            if self.graphics.rect_at(mouse_click):
-                self.start_pos = self.graphics.rect_at(mouse_click)
-                if self.logic.player_owns_square(Player.RED, self.start_pos):
-                    self.state = self.opponent_turn_2
-
-    def opponent_turn_2(self, event):
-        self.graphics.highlight_piece(self.screen, self.start_pos,
-                                      self.logic.is_king(self.start_pos, Player.RED), Player.RED)
-        if event.type == pygame.MOUSEBUTTONUP:
-            mouse_click = pygame.mouse.get_pos()
-            if self.graphics.rect_at(mouse_click) is not None:
-                board_pos = self.graphics.rect_at(mouse_click)
-                if self.start_pos == board_pos:
-                    self.state = self.opponent_turn_1
-                if self.logic.is_legal(self.start_pos, board_pos):
-                    self.end_pos = board_pos
-                    self.logic.perform_move(self.start_pos, self.end_pos)
-                    if not self.logic.check_for_jump(self.end_pos) or not self.logic.take_made:
-                        self.logic.player_turn = self.logic.next_player()
-                        self.state = self.player_turn_1
-                    else:
-                        self.start_pos = self.end_pos
-                        self.end_pos = None
-                        self.state = self.opponent_turn_3
-                self.logic.set_take_made()
-
-    def opponent_turn_3(self, event):
-        self.graphics.highlight_piece(self.screen, self.start_pos,
-                                      self.logic.is_king(self.start_pos, Player.RED), Player.RED)
-        if event.type == pygame.MOUSEBUTTONUP:
-            mouse_click = pygame.mouse.get_pos()
-            board_pos = self.graphics.rect_at(mouse_click)
-            if self.graphics.rect_at(mouse_click) is not None:
-                board_pos = self.graphics.rect_at(mouse_click)
-            if self.logic.is_legal(self.start_pos, board_pos):
-                self.end_pos = board_pos
-                self.logic.perform_move(self.start_pos, self.end_pos)
-                if not self.logic.check_for_jump(self.end_pos):
-                    self.logic.player_turn = self.logic.next_player()
-                    self.state = self.player_turn_1
-                else:
-                    self.start_pos = self.end_pos
-                    self.end_pos = None
-                    self.state = self.opponent_turn_3
-                self.logic.set_take_made()
+            if self.logic.check_for_jump(move[1]) and self.logic.take_made:
+                self.human_player_2.toggle_jump_state()
+                self.human_player_2.on_event(event, self.logic, self.graphics, self.screen, self.logic.player_turn)
+                move = self.human_player_2.get_move()
+                if move is not None:
+                    self.logic.perform_move(move[0], move[1])
+            else:
+                self.human_player_2.reset_data()
+                self.logic.set_take_made(False)
+                self.logic.change_player(self.logic.next_player())
+                self.state = self.player_1_turn
+        if event.type == pygame.KEYDOWN and event.key == pygame.K_SPACE:
+            print(self.logic.get_moves())
 
 
 def main():
@@ -404,7 +451,7 @@ def main():
     game = GameState()
     graphics = GraphicalBoard()
     screen_update = pygame.USEREVENT
-    pygame.time.set_timer(screen_update, 30)
+    pygame.time.set_timer(screen_update, 100)
 
     while True:
         for event in pygame.event.get():
@@ -415,8 +462,6 @@ def main():
             graphics.draw_board(game.screen)
             graphics.draw_pieces(game.screen, game.logic)
             game.state(event)
-
-            pygame.display.update()
 
         pygame.display.update()
         clock.tick(60)
