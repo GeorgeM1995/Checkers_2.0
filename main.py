@@ -2,32 +2,33 @@ import pygame
 import sys
 import enum
 import abc
+import random
 
 
 class PlayerType(abc.ABC):
     @abc.abstractmethod
-    def get_move(self):
+    def move_made(self):
         pass
 
 
 class HumanPlayer(PlayerType):
     def __init__(self):
-        self._move = []
+        self._move = False
         self.state = self.state_1
         self.start_pos = None
         self.end_pos = None
 
     def reset_data(self):
-        self._move = []
+        self._move = False
         self.state = self.state_1
         self.start_pos = None
         self.end_pos = None
 
-    def get_move(self):
-        if len(self._move) < 2:
+    def move_made(self):
+        if not self._move:
             return None
         else:
-            return self._move
+            return True
 
     def on_event(self, event, logic, graphics, screen, player):
         self.state(event, logic, graphics, screen, player)
@@ -48,14 +49,15 @@ class HumanPlayer(PlayerType):
                 board_pos = graphics.rect_at(mouse_click)
                 if self.start_pos == board_pos:
                     self.state = self.state_1
-                if logic.is_legal(self.start_pos, board_pos):
+                if logic.is_legal(self.start_pos, board_pos) and not self.state == self.state_1:
                     self.end_pos = board_pos
-                    self._move = [self.start_pos, self.end_pos]
+                    logic.perform_move(self.start_pos, self.end_pos)
 
-    def toggle_jump_state(self):
-        self._move = []
-        self.start_pos = self.end_pos
-        self.state = self.jump_state
+                    if logic.check_for_jump(self.end_pos) and logic.take_made:
+                        self.start_pos = self.end_pos
+                        self.state = self.jump_state
+                    else:
+                        self._move = True
 
     def jump_state(self, event, logic, graphics, screen, player):
         graphics.highlight_piece(screen, self.start_pos, logic.is_king(self.start_pos, player), player)
@@ -66,16 +68,58 @@ class HumanPlayer(PlayerType):
                 board_pos = graphics.rect_at(mouse_click)
             if logic.is_legal(self.start_pos, board_pos):
                 self.end_pos = board_pos
-                self._move = [self.start_pos, self.end_pos]
+                logic.perform_move(self.start_pos, self.end_pos)
+                if logic.check_for_jump(self.end_pos) and logic.take_made:
+                    self.start_pos = self.end_pos
+                    self.state = self.jump_state
+                else:
+                    self._move = True
 
 
 class RandomPlayer(PlayerType):
-    def get_move(self):
+    def __init__(self):
+        self._move_made = False
+        self.state = self.state_1
+        self._legal_moves = None
+        self._move = None
+        self._start_pos = None
+        self._end_pos = None
+
+    def move_made(self):
+        if self._move:
+            return self._move_made
+
+    def begin_move(self, logic, graphics, screen, player):
+        self.state(logic, graphics, screen, player)
+
+    def state_1(self, logic, graphics, screen, player):
+        self._legal_moves = logic.get_moves(player)
+        number = random.randint(0, len(self._legal_moves) - 1)
+        self._move = (self._legal_moves[number])
+        self._start_pos = self._move[0]
+        self._end_pos = self._move[1]
+        self.state = self.state_2
+
+    def state_2(self, logic, graphics, screen, player):
+        graphics.highlight_piece(player, self._move[0], logic.is_king(self._move[0], player), screen)
+        logic.check_for_take(self._start_pos, self._end_pos)
+        logic.perform_move(self._start_pos, self._end_pos)
+        self._move_made = True
+
+    def jump_state(self, logic, graphics, screen, player):
         pass
+
+    def reset_data(self):
+        self._move_made = False
+        self.state = self.state_1
+        self._legal_moves = None
+        self._move = None
+        self._start_pos = None
+        self._end_pos = None
 
 
 class MiniMaxPlayer(PlayerType):
-    def get_move(self):
+    def move_made(self):
         pass
 
 
@@ -91,6 +135,11 @@ class CellValue(enum.Enum):
 class Player(enum.Enum):
     BLACK = 0
     RED = 1
+
+
+class PlayerRole(enum.Enum):
+    HUMAN = 0
+    AI = 1
 
 
 class GraphicalBoard:
@@ -336,7 +385,7 @@ class GameLogic:
     def set_take_made(self, is_take_made):
         self.take_made = is_take_made
 
-    def get_moves(self):
+    def get_moves(self, player):
         legal_moves = []
         y_index = 0
         x_index = 0
@@ -353,32 +402,51 @@ class GameLogic:
                 take_back_right = (x_index + 2, y_index - 2)
                 take_back_left = (x_index - 2, y_index - 2)
 
-                if space == CellValue.RED or space == CellValue.RED_KING:
-                    start_pos = (x_index, y_index)
-                    if self.is_legal(start_pos, front_right):
-                        legal_moves.append((start_pos, front_right))
-                    if self.is_legal(start_pos, front_left):
-                        legal_moves.append((start_pos, front_left))
-                    if self.is_legal(start_pos, back_right):
-                        legal_moves.append((start_pos, back_right))
-                    if self.is_legal(start_pos, back_left):
-                        legal_moves.append((start_pos, back_left))
+                if player == Player.RED:
+                    if space == CellValue.RED or space == CellValue.RED_KING:
+                        start_pos = (x_index, y_index)
+                        if self.is_legal(start_pos, front_right):
+                            legal_moves.append((start_pos, front_right))
+                        if self.is_legal(start_pos, front_left):
+                            legal_moves.append((start_pos, front_left))
+                        if self.is_legal(start_pos, back_right):
+                            legal_moves.append((start_pos, back_right))
+                        if self.is_legal(start_pos, back_left):
+                            legal_moves.append((start_pos, back_left))
 
-                    if self.is_legal(start_pos, take_front_right):
-                        legal_moves.append((start_pos, take_front_right))
-                    if self.is_legal(start_pos, take_front_left):
-                        legal_moves.append((start_pos, take_front_left))
-                    if self.is_legal(start_pos, take_back_right):
-                        legal_moves.append((start_pos, take_back_right))
-                    if self.is_legal(start_pos, take_back_left):
-                        legal_moves.append((start_pos, take_back_left))
+                        if self.is_legal(start_pos, take_front_right):
+                            legal_moves.append((start_pos, take_front_right))
+                        if self.is_legal(start_pos, take_front_left):
+                            legal_moves.append((start_pos, take_front_left))
+                        if self.is_legal(start_pos, take_back_right):
+                            legal_moves.append((start_pos, take_back_right))
+                        if self.is_legal(start_pos, take_back_left):
+                            legal_moves.append((start_pos, take_back_left))
+                else:
+                    if space == CellValue.BLACK or space == CellValue.BLACK_KING:
+                        start_pos = (x_index, y_index)
+                        if self.is_legal(start_pos, front_right):
+                            legal_moves.append((start_pos, front_right))
+                        if self.is_legal(start_pos, front_left):
+                            legal_moves.append((start_pos, front_left))
+                        if self.is_legal(start_pos, back_right):
+                            legal_moves.append((start_pos, back_right))
+                        if self.is_legal(start_pos, back_left):
+                            legal_moves.append((start_pos, back_left))
+
+                        if self.is_legal(start_pos, take_front_right):
+                            legal_moves.append((start_pos, take_front_right))
+                        if self.is_legal(start_pos, take_front_left):
+                            legal_moves.append((start_pos, take_front_left))
+                        if self.is_legal(start_pos, take_back_right):
+                            legal_moves.append((start_pos, take_back_right))
+                        if self.is_legal(start_pos, take_back_left):
+                            legal_moves.append((start_pos, take_back_left))
 
                 x_index += 1
             y_index += 1
             x_index = 0
         return legal_moves
-
-
 
     def game_over(self):
         black_pieces = 0
@@ -397,8 +465,12 @@ class GameLogic:
 
 class GameState:
     def __init__(self):
+        self.player_1_role = PlayerRole.AI
+        self.player_2_role = PlayerRole.HUMAN
         self.human_player = HumanPlayer()
         self.human_player_2 = HumanPlayer()
+        self.ai_player_1 = RandomPlayer()
+        self.ai_player_2 = RandomPlayer()
         self.resolution = 900
         self.cell_size = 111
         self.screen = pygame.display.set_mode((self.resolution, self.resolution))
@@ -408,41 +480,40 @@ class GameState:
 
     # State 1 for the player turn (Player has to select a piece)
     def player_1_turn(self, event):
-        self.human_player.on_event(event, self.logic, self.graphics, self.screen, self.logic.player_turn)
-        move = self.human_player.get_move()
-        if move is not None:
-            self.logic.perform_move(move[0], move[1])
-            if self.logic.check_for_jump(move[1]) and self.logic.take_made:
-                self.human_player.toggle_jump_state()
-                self.human_player.on_event(event, self.logic, self.graphics, self.screen, self.logic.player_turn)
-                move = self.human_player.get_move()
-                if move is not None:
-                    self.logic.perform_move(move[0], move[1])
-            else:
+        if self.player_1_role == PlayerRole.HUMAN:
+            self.human_player.on_event(event, self.logic, self.graphics, self.screen, self.logic.player_turn)
+            move_made = self.human_player.move_made()
+            if move_made:
                 self.human_player.reset_data()
                 self.logic.set_take_made(False)
                 self.logic.change_player(self.logic.next_player())
                 self.state = self.player_2_turn
+        else:
+            self.ai_player_1.begin_move(self.logic, self.graphics, self.logic.player_turn, self.screen)
+            move_made = self.ai_player_1.move_made()
+            if move_made:
+                self.logic.set_take_made(False)
+                self.logic.change_player(self.logic.next_player())
+                self.state = self.player_2_turn
+                self.ai_player_1.reset_data()
 
     def player_2_turn(self, event):
-        self.human_player_2.on_event(event, self.logic, self.graphics, self.screen, self.logic.player_turn)
-        move = self.human_player_2.get_move()
-        if move is not None:
-            self.logic.perform_move(move[0], move[1])
-
-            if self.logic.check_for_jump(move[1]) and self.logic.take_made:
-                self.human_player_2.toggle_jump_state()
-                self.human_player_2.on_event(event, self.logic, self.graphics, self.screen, self.logic.player_turn)
-                move = self.human_player_2.get_move()
-                if move is not None:
-                    self.logic.perform_move(move[0], move[1])
-            else:
+        if self.player_2_role == PlayerRole.HUMAN:
+            self.human_player_2.on_event(event, self.logic, self.graphics, self.screen, self.logic.player_turn)
+            move_made = self.human_player_2.move_made()
+            if move_made:
                 self.human_player_2.reset_data()
                 self.logic.set_take_made(False)
                 self.logic.change_player(self.logic.next_player())
                 self.state = self.player_1_turn
-        if event.type == pygame.KEYDOWN and event.key == pygame.K_SPACE:
-            print(self.logic.get_moves())
+        else:
+            self.ai_player_2.begin_move(self.logic, self.graphics, self.logic.player_turn, self.screen)
+            move_made = self.ai_player_2.move_made()
+            if move_made:
+                self.logic.set_take_made(False)
+                self.logic.change_player(self.logic.next_player())
+                self.state = self.player_1_turn
+                self.ai_player_2.reset_data()
 
 
 def main():
